@@ -32,6 +32,25 @@ for (const file of commandFiles) {
   }
 }
 
+// If no commands were loaded from files (e.g., missing folder in deployment),
+// provide a small built-in fallback command so the bot still exposes at least
+// one slash command in Discord (useful for testing deployments like Railway).
+if (client.commands.size === 0) {
+  try {
+    const { SlashCommandBuilder } = require('discord.js');
+    const pingCommand = {
+      data: new SlashCommandBuilder().setName('ping').setDescription('Check bot is alive'),
+      async execute(interaction) {
+        await interaction.reply({ content: 'Pong!', ephemeral: true });
+      }
+    };
+    client.commands.set(pingCommand.data.name, pingCommand);
+    console.log('⚡ No command files found — registered fallback command: /ping');
+  } catch (e) {
+    console.warn('Could not register fallback command:', e);
+  }
+}
+
 // Debug: show commands folder status
 try {
   const commandsPath = path.resolve(__dirname, 'commands');
@@ -40,6 +59,17 @@ try {
   if (fs.existsSync(commandsPath)) console.log('commands files:', fs.readdirSync(commandsPath));
 } catch (e) {
   console.warn('Could not inspect commands folder:', e);
+}
+
+// Startup environment diagnostics (masked token, presence of CLIENT_ID)
+try {
+  const hasToken = !!process.env.TOKEN;
+  const hasClientId = !!process.env.CLIENT_ID;
+  const masked = hasToken ? (`***${String(process.env.TOKEN).slice(-6)}`) : 'NONE';
+  console.log('env: TOKEN present?', hasToken, 'masked_suffix:', masked, 'CLIENT_ID present?', hasClientId);
+  console.log('Loaded command files count:', commandFiles.length);
+} catch (e) {
+  console.warn('Could not print env diagnostics:', e);
 }
 
 // Auto-register commands with Discord on startup (helps when deploying to Railway)
