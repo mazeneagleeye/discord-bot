@@ -1,15 +1,17 @@
 const { REST, Routes } = require('discord.js');
 const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const commands = [];
 let commandFiles = [];
 try {
-  if (fs.existsSync('./commands')) {
-    commandFiles = fs.readdirSync('./commands').filter(file => file.endsWith('.js'));
+  const commandsDir = path.resolve(__dirname, 'commands');
+  if (fs.existsSync(commandsDir)) {
+    commandFiles = fs.readdirSync(commandsDir).filter(file => file.endsWith('.js'));
   } else {
     // fallback: look for possible command files at repo root
-    const rootFiles = fs.readdirSync('.').filter(f => f.endsWith('.js'));
+    const rootFiles = fs.readdirSync(__dirname).filter(f => f.endsWith('.js'));
     const exclude = new Set(['deploy-commands.js', 'index.js', 'missionData.js', 'package.json']);
     commandFiles = rootFiles.filter(f => !exclude.has(f));
     if (commandFiles.length) console.log('Using command files found at repo root:', commandFiles);
@@ -20,9 +22,11 @@ try {
 
 for (const file of commandFiles) {
   try {
-    const pathToRequire = fs.existsSync('./commands') ? `./commands/${file}` : `./${file}`;
+    const commandsDir = path.resolve(__dirname, 'commands');
+    const useCommandsDir = fs.existsSync(commandsDir);
+    const pathToRequire = useCommandsDir ? path.join(commandsDir, file) : path.join(__dirname, file);
     const command = require(pathToRequire);
-    if (command.data) {
+    if (command && command.data) {
       commands.push(command.data.toJSON());
     }
   } catch (e) {
