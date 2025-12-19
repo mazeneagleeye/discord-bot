@@ -105,13 +105,35 @@ async function registerCommands() {
       console.log('Skipping auto-registration: missing TOKEN or CLIENT_ID');
       return;
     }
+    // Re-scan commands directory at registration time so deployments that
+    // didn't contain ./commands at startup can still register commands if
+    // they exist at runtime (e.g., found at repo root or later added).
     const commands = [];
     const commandNames = [];
-    for (const file of commandFiles) {
-      const command = require(`./commands/${file}`);
-      if (command && command.data) {
-        commands.push(command.data.toJSON());
-        commandNames.push(command.data.name || file);
+    const path = require('path');
+    const commandsDir = path.resolve(__dirname, 'commands');
+    let filesToLoad = [];
+    if (fs.existsSync(commandsDir)) {
+      filesToLoad = fs.readdirSync(commandsDir).filter(f => f.endsWith('.js'));
+      console.log('registerCommands: found command files in ./commands:', filesToLoad);
+    } else {
+      // fallback: look for possible command files at repo root
+      const rootFiles = fs.readdirSync(__dirname).filter(f => f.endsWith('.js'));
+      const exclude = new Set(['index.js', 'deploy-commands.js', 'missionData.js', 'package.json']);
+      filesToLoad = rootFiles.filter(f => !exclude.has(f));
+      if (filesToLoad.length) console.log('registerCommands: found command files at repo root:', filesToLoad);
+    }
+
+    for (const file of filesToLoad) {
+      try {
+        const filePath = fs.existsSync(commandsDir) ? path.join(commandsDir, file) : path.join(__dirname, file);
+        const command = require(filePath);
+        if (command && command.data) {
+          commands.push(command.data.toJSON());
+          commandNames.push(command.data.name || file);
+        }
+      } catch (err) {
+        console.warn('registerCommands: failed to load command', file, err && err.message);
       }
     }
     if (!commands.length) {
