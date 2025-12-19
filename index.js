@@ -10,53 +10,60 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// load commands from ./commands (robust)
-let commandFiles = [];
-try {
-  const commandsPath = path.resolve(__dirname, "commands");
-  commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-} catch (err) {
-  console.log("⚠ Commands folder not found. Skipping command loading.");
-}
-
-for (const file of commandFiles) {
+// Helper: load commands from ./commands or fallback to repo root. Safe to call multiple times.
+function loadCommandsFromFs() {
+  const path = require('path');
+  const commandsDir = path.resolve(__dirname, 'commands');
+  let files = [];
   try {
-    const command = require(`./commands/${file}`);
-    if (command && command.data && command.data.name) {
-      client.commands.set(command.data.name, command);
-    } else {
-      console.warn(`Skipping invalid command file: ${file}`);
-    }
-  } catch (err) {
-    console.error(`Failed to load command file ${file}:`, err);
-  }
-}
-
-// If no command files were found in ./commands, attempt to find command files at repo root
-if (commandFiles.length === 0) {
-  try {
-    const rootFiles = fs.readdirSync(__dirname).filter(f => f.endsWith('.js'));
-    // exclude core files
-    const exclude = new Set(['index.js', 'deploy-commands.js', 'missionData.js', 'package.json']);
-    const rootCommandFiles = rootFiles.filter(f => !exclude.has(f));
-    if (rootCommandFiles.length) {
-      console.log('Found possible command files at repo root:', rootCommandFiles);
-      for (const file of rootCommandFiles) {
+    if (fs.existsSync(commandsDir)) {
+      files = fs.readdirSync(commandsDir).filter(f => f.endsWith('.js'));
+      console.log('Loading command files from ./commands:', files);
+      for (const file of files) {
         try {
-          const command = require(`./${file}`);
+          const full = path.join(commandsDir, file);
+          // clear cache so updates are picked up on re-load
+          delete require.cache[require.resolve(full)];
+          const command = require(full);
           if (command && command.data && command.data.name) {
             client.commands.set(command.data.name, command);
-            console.log(`Loaded command from root: ${file}`);
+          } else {
+            console.warn(`Skipping invalid command file: ${file}`);
           }
         } catch (err) {
-          // not a command file, ignore
+          console.error(`Failed to load command file ${file}:`, err && err.message);
+        }
+      }
+    } else {
+      console.log('⚠ Commands folder not found. Skipping command loading.');
+      // fallback: scan repo root
+      const rootFiles = fs.readdirSync(__dirname).filter(f => f.endsWith('.js'));
+      const exclude = new Set(['index.js', 'deploy-commands.js', 'missionData.js', 'package.json']);
+      const rootCommandFiles = rootFiles.filter(f => !exclude.has(f));
+      if (rootCommandFiles.length) {
+        console.log('Found possible command files at repo root:', rootCommandFiles);
+        for (const file of rootCommandFiles) {
+          try {
+            const full = path.join(__dirname, file);
+            delete require.cache[require.resolve(full)];
+            const command = require(full);
+            if (command && command.data && command.data.name) {
+              client.commands.set(command.data.name, command);
+              console.log(`Loaded command from root: ${file}`);
+            }
+          } catch (err) {
+            // not a command file, ignore
+          }
         }
       }
     }
-  } catch (e) {
-    // ignore
+  } catch (err) {
+    console.error('Error while scanning commands:', err && err.message);
   }
 }
+
+// initial load (best-effort)
+loadCommandsFromFs();
 
 // If no commands were loaded from files (e.g., missing folder in deployment),
 // provide a small built-in fallback command so the bot still exposes at least
@@ -165,6 +172,14 @@ registerCommands().catch(err => console.error('registerCommands failed:', err));
 
 client.once("clientReady", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+
+  // Re-load commands from filesystem at ready time (in case they appeared after startup)
+  try {
+    loadCommandsFromFs();
+    console.log('clientReady: loaded commands:', Array.from(client.commands.keys()));
+  } catch (err) {
+    console.warn('clientReady: failed to re-load commands:', err && err.message);
+  }
 
   // Auto-register commands using the client application (works when bot is ready)
   try {
