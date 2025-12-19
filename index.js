@@ -32,6 +32,32 @@ for (const file of commandFiles) {
   }
 }
 
+// If no command files were found in ./commands, attempt to find command files at repo root
+if (commandFiles.length === 0) {
+  try {
+    const rootFiles = fs.readdirSync(__dirname).filter(f => f.endsWith('.js'));
+    // exclude core files
+    const exclude = new Set(['index.js', 'deploy-commands.js', 'missionData.js', 'package.json']);
+    const rootCommandFiles = rootFiles.filter(f => !exclude.has(f));
+    if (rootCommandFiles.length) {
+      console.log('Found possible command files at repo root:', rootCommandFiles);
+      for (const file of rootCommandFiles) {
+        try {
+          const command = require(`./${file}`);
+          if (command && command.data && command.data.name) {
+            client.commands.set(command.data.name, command);
+            console.log(`Loaded command from root: ${file}`);
+          }
+        } catch (err) {
+          // not a command file, ignore
+        }
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
 // If no commands were loaded from files (e.g., missing folder in deployment),
 // provide a small built-in fallback command so the bot still exposes at least
 // one slash command in Discord (useful for testing deployments like Railway).
@@ -115,7 +141,7 @@ async function registerCommands() {
 // Trigger registration (don't block startup)
 registerCommands().catch(err => console.error('registerCommands failed:', err));
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 
   // Auto-register commands using the client application (works when bot is ready)
@@ -135,15 +161,18 @@ client.once("ready", async () => {
       if (guild) {
         await guild.commands.set(commands);
         console.log(`✅ Slash commands registered to guild ${process.env.GUILD_ID}`);
+        console.log('Registered commands:', commands.map(c => c.name));
       } else {
         // Fallback to global registration
         await client.application.commands.set(commands);
         console.log('✅ Global slash commands registered (fallback)');
+        console.log('Registered commands:', commands.map(c => c.name));
       }
     } else {
       // Register global commands (may take up to an hour to propagate)
       await client.application.commands.set(commands);
       console.log('✅ Global slash commands registered');
+      console.log('Registered commands:', commands.map(c => c.name));
     }
   } catch (error) {
     console.error('❌ Failed to register commands:', error);
@@ -159,14 +188,54 @@ if (!process.env.TOKEN) {
 
 // Lightweight HTTP health check server so Railway can keep the service alive
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
-  if (req.url === '/health') {
+http.createServer(async (req, res) => {
+  try {
+    const url = req.url || '';
+    if (url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('OK');
+      return;
+    }
+
+    // Protected registration endpoint: POST /register-commands with header x-register-secret
+    if (url.startsWith('/register-commands')) {
+      const secret = process.env.REGISTER_SECRET;
+      if (!secret) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Registration endpoint is disabled (no REGISTER_SECRET configured)');
+        return;
+      }
+      // only allow POST
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'text/plain' });
+        res.end('Method Not Allowed');
+        return;
+      }
+      const provided = req.headers['x-register-secret'];
+      if (!provided || provided !== secret) {
+        res.writeHead(401, { 'Content-Type': 'text/plain' });
+        res.end('Unauthorized');
+        return;
+      }
+
+      // trigger registration
+      try {
+        await registerCommands();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, message: 'Registration triggered' }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: err && err.message }));
+      }
+      return;
+    }
+
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('OK');
-    return;
+    res.end('Bot is running');
+  } catch (e) {
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('Error');
   }
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Bot is running');
 }).listen(PORT, () => console.log(`🔌 Health server listening on port ${PORT}`));
 
 // Graceful shutdown to let Railway restart cleanly
