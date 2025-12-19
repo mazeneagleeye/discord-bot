@@ -32,8 +32,92 @@ for (const file of commandFiles) {
   }
 }
 
-client.once("ready", () => {
+// Debug: show commands folder status
+try {
+  const commandsPath = path.resolve(__dirname, 'commands');
+  console.log('cwd:', process.cwd());
+  console.log('commandsPath exists:', fs.existsSync(commandsPath));
+  if (fs.existsSync(commandsPath)) console.log('commands files:', fs.readdirSync(commandsPath));
+} catch (e) {
+  console.warn('Could not inspect commands folder:', e);
+}
+
+// Auto-register commands with Discord on startup (helps when deploying to Railway)
+async function registerCommands() {
+  try {
+    if (!process.env.TOKEN || !process.env.CLIENT_ID) {
+      console.log('Skipping auto-registration: missing TOKEN or CLIENT_ID');
+      return;
+    }
+    const commands = [];
+    const commandNames = [];
+    for (const file of commandFiles) {
+      const command = require(`./commands/${file}`);
+      if (command && command.data) {
+        commands.push(command.data.toJSON());
+        commandNames.push(command.data.name || file);
+      }
+    }
+    if (!commands.length) {
+      console.log('No commands to register.');
+      return;
+    }
+
+    const { REST, Routes } = require('discord.js');
+    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+
+    console.log('Registering commands with Discord...');
+    console.log('Commands to register:', commandNames);
+    if (process.env.GUILD_ID) {
+      await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: commands });
+      console.log('Successfully registered guild commands for GUILD_ID:', process.env.GUILD_ID);
+      console.log('Registered commands:', commandNames);
+    } else {
+      await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
+      console.log('Successfully registered global commands. (Note: propagation can take up to an hour)');
+      console.log('Registered commands:', commandNames);
+    }
+  } catch (err) {
+    console.error('Failed to register commands:', err);
+  }
+}
+
+// Trigger registration (don't block startup)
+registerCommands().catch(err => console.error('registerCommands failed:', err));
+
+client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+
+  // Auto-register commands using the client application (works when bot is ready)
+  try {
+    const commands = client.commands.map(cmd => cmd.data?.toJSON()).filter(Boolean);
+    if (!commands.length) {
+      console.log('No commands found to register via client.application.');
+      return;
+    }
+
+    if (process.env.GUILD_ID) {
+      // Try to register as guild commands for instant availability in that guild
+      let guild = client.guilds.cache.get(process.env.GUILD_ID);
+      if (!guild) {
+        guild = await client.guilds.fetch(process.env.GUILD_ID).catch(() => null);
+      }
+      if (guild) {
+        await guild.commands.set(commands);
+        console.log(`✅ Slash commands registered to guild ${process.env.GUILD_ID}`);
+      } else {
+        // Fallback to global registration
+        await client.application.commands.set(commands);
+        console.log('✅ Global slash commands registered (fallback)');
+      }
+    } else {
+      // Register global commands (may take up to an hour to propagate)
+      await client.application.commands.set(commands);
+      console.log('✅ Global slash commands registered');
+    }
+  } catch (error) {
+    console.error('❌ Failed to register commands:', error);
+  }
 });
 
 // --- Railway / PaaS helpers ---

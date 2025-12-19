@@ -2,8 +2,12 @@
   "name": "new-generate",
   "version": "1.0.0",
   "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
      "start": "node index.js",
+    "register-commands": "node deploy-commands.js",
      "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
